@@ -20,6 +20,50 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: creditoapi-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - credito-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: creditoapi-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - credito-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: creditoapi-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - credito-network
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -29,14 +73,22 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:80
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=creditodb;Username=postgres;Password=postgres
+      - ConnectionStrings__Redis=redis:6379
       - ServiceBus__ConnectionString=Endpoint=sb://your-namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=your-key
       - ServiceBus__TopicName=integrar-credito-constituido-entry
       - ServiceBus__SubscriptionName=credito-processor
+      - ServiceBus__AuditTopicName=consulta-credito-log
       - BackgroundService__ProcessingIntervalMs=500
+      - JwtSettings__Secret=your-super-secret-key-min-32-characters-long-for-security
+      - JwtSettings__Issuer=CreditoAPI
+      - JwtSettings__Audience=CreditoAPIClients
+      - JwtSettings__ExpirationInMinutes=60
     ports:
       - "5000:80"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - credito-network
@@ -44,6 +96,12 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:

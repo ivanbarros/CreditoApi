@@ -1,9 +1,12 @@
 using CreditoAPI.Application.Commands;
 using CreditoAPI.Application.Queries;
 using CreditoAPI.DTOs;
+using CreditoAPI.Infrastructure.Cache;
 using CreditoAPI.Services;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Asp.Versioning;
 
 namespace CreditoAPI.Controllers
 {
@@ -12,26 +15,26 @@ namespace CreditoAPI.Controllers
     /// Implementa SOLID - Single Responsibility e Dependency Inversion
     /// </summary>
     [ApiController]
-    [Route("api/creditos")]
+    [Route("api/v{version:apiVersion}/creditos")]
+    [ApiVersion("1.0")]
+    [Authorize]
     public class CreditosController : ControllerBase
     {
         private readonly IMediator _mediator;
         private readonly ILogger<CreditosController> _logger;
         private readonly IServiceBusService _serviceBusService;
-        private ICreditoService object1;
-        private ILogger<CreditosController> object2;
+        private readonly ICacheService? _cacheService;
 
-        public CreditosController(IMediator mediator, ILogger<CreditosController> logger, IServiceBusService serviceBusService)
+        public CreditosController(
+            IMediator mediator, 
+            ILogger<CreditosController> logger, 
+            IServiceBusService serviceBusService,
+            ICacheService? cacheService = null)
         {
             _mediator = mediator;
             _logger = logger;
             _serviceBusService = serviceBusService;
-        }
-
-        public CreditosController(ICreditoService object1, ILogger<CreditosController> object2)
-        {
-            this.object1 = object1;
-            this.object2 = object2;
+            _cacheService = cacheService;
         }
 
         /// <summary>
@@ -40,6 +43,7 @@ namespace CreditoAPI.Controllers
         /// <param name="creditos">Lista de créditos a serem integrados</param>
         /// <returns>Status da operação</returns>
         [HttpPost("integrar-credito-constituido")]
+        [Authorize(Roles = "Admin")]
         [ProducesResponseType(typeof(IntegrarCreditoResponse), StatusCodes.Status202Accepted)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -73,27 +77,60 @@ namespace CreditoAPI.Controllers
         /// <param name="numeroNfse">Número identificador da NFS-e</param>
         /// <returns>Lista de créditos</returns>
         [HttpGet("{numeroNfse}")]
-        [ProducesResponseType(typeof(List<CreditoDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(PagedResult<CreditoDto>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        public async Task<IActionResult> GetByNumeroNfse(string numeroNfse)
+        public async Task<IActionResult> GetByNumeroNfse(
+            string numeroNfse,
+            [FromQuery] int pageNumber = 1,
+            [FromQuery] int pageSize = 10)
         {
             try
             {
                 _logger.LogInformation("Retrieving creditos by numero nfse: {NumeroNfse}", numeroNfse);
 
-                // CQRS - Envia query via MediatR
-                var query = new GetCreditosByNfseQuery(numeroNfse);
-                var creditos = await _mediator.Send(query);
+                var cacheKey = $"creditos:nfse:{numeroNfse}:page:{pageNumber}:size:{pageSize}";
+                
+                if (_cacheService != null)
+                {
+                    var cachedResult = await _cacheService.GetAsync<PagedResult<CreditoDto>>(cacheKey);
+                    if (cachedResult != null)
+                    {
+                        _logger.LogInformation("Cache hit for key: {CacheKey}", cacheKey);
+                        return Ok(cachedResult);
+                    }
+                }
 
-                if (creditos == null || !creditos.Any())
+                var query = new GetCreditosByNfseQuery(numeroNfse);
+                var allCreditos = await _mediator.Send(query);
+
+                if (allCreditos == null || !allCreditos.Any())
                 {
                     return NotFound(new { error = "Nenhum crédito encontrado para a NFS-e informada" });
                 }
 
+                var totalCount = allCreditos.Count;
+                var items = allCreditos
+                    .Skip((pageNumber - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                var pagedResult = new PagedResult<CreditoDto>
+                {
+                    Items = items,
+                    PageNumber = pageNumber,
+                    PageSize = pageSize,
+                    TotalCount = totalCount
+                };
+
+                if (_cacheService != null)
+                {
+                    await _cacheService.SetAsync(cacheKey, pagedResult, TimeSpan.FromMinutes(5));
+                }
+
                 await _serviceBusService.SendAuditMessageAsync("consulta-por-nfse", numeroNfse);
 
-                return Ok(creditos);
+                return Ok(pagedResult);
             }
             catch (Exception ex)
             {
@@ -117,13 +154,29 @@ namespace CreditoAPI.Controllers
             {
                 _logger.LogInformation("Retrieving credito by numero credito: {NumeroCredito}", numeroCredito);
 
-                // CQRS - Envia query via MediatR
+                var cacheKey = $"credito:{numeroCredito}";
+                
+                if (_cacheService != null)
+                {
+                    var cachedCredito = await _cacheService.GetAsync<CreditoDto>(cacheKey);
+                    if (cachedCredito != null)
+                    {
+                        _logger.LogInformation("Cache hit for key: {CacheKey}", cacheKey);
+                        return Ok(cachedCredito);
+                    }
+                }
+
                 var query = new GetCreditoByNumeroQuery(numeroCredito);
                 var credito = await _mediator.Send(query);
 
                 if (credito == null)
                 {
                     return NotFound(new { error = "Crédito não encontrado" });
+                }
+
+                if (_cacheService != null)
+                {
+                    await _cacheService.SetAsync(cacheKey, credito, TimeSpan.FromMinutes(10));
                 }
 
                 await _serviceBusService.SendAuditMessageAsync("consulta-por-credito", numeroCredito);

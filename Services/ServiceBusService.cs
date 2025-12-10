@@ -6,10 +6,10 @@ namespace CreditoAPI.Services
 {
     public class ServiceBusService : IServiceBusService, IAsyncDisposable
     {
-        private readonly ServiceBusClient _client;
-        private readonly ServiceBusSender _sender;
-        private readonly ServiceBusReceiver _receiver;
-        private readonly ServiceBusSender _auditSender;
+        private readonly ServiceBusClient? _client;
+        private readonly ServiceBusSender? _sender;
+        private readonly ServiceBusReceiver? _receiver;
+        private readonly ServiceBusSender? _auditSender;
         private readonly ILogger<ServiceBusService> _logger;
         private readonly string _topicName;
         private readonly string _auditTopicName;
@@ -25,9 +25,10 @@ namespace CreditoAPI.Services
             if (string.IsNullOrEmpty(connectionString) || connectionString.Contains("your-namespace"))
             {
                 _logger.LogWarning("Service Bus connection string not configured. Using mock implementation.");
-                _client = null!;
-                _sender = null!;
-                _receiver = null!;
+                _client = null;
+                _sender = null;
+                _receiver = null;
+                _auditSender = null;
             }
             else
             {

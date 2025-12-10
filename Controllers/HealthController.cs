@@ -1,10 +1,14 @@
+using Asp.Versioning;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace CreditoAPI.Controllers
 {
     [ApiController]
-    [Route("api")]
+    [Route("api/v{version:apiVersion}")]
+    [ApiVersion("1.0")]
+    [AllowAnonymous]
     public class HealthController : ControllerBase
     {
         private readonly HealthCheckService _healthCheckService;
