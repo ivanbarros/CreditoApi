@@ -5,19 +5,25 @@ namespace CreditoAPI.Infrastructure.Cache
 {
     public class RedisCacheService : ICacheService
     {
-        private readonly IConnectionMultiplexer _redis;
-        private readonly IDatabase _database;
+        private readonly IConnectionMultiplexer? _redis;
+        private readonly IDatabase? _database;
         private readonly ILogger<RedisCacheService> _logger;
 
-        public RedisCacheService(IConnectionMultiplexer redis, ILogger<RedisCacheService> logger)
+        public RedisCacheService(IConnectionMultiplexer? redis, ILogger<RedisCacheService> logger)
         {
             _redis = redis;
-            _database = redis.GetDatabase();
+            _database = redis?.GetDatabase();
             _logger = logger;
         }
 
         public async Task<T?> GetAsync<T>(string key)
         {
+            if (_database == null)
+            {
+                _logger.LogWarning("Redis database not available. Returning default value for key: {Key}", key);
+                return default;
+            }
+
             try
             {
                 var value = await _database.StringGetAsync(key);
@@ -36,6 +42,12 @@ namespace CreditoAPI.Infrastructure.Cache
 
         public async Task SetAsync<T>(string key, T value, TimeSpan? expiration = null)
         {
+            if (_database == null)
+            {
+                _logger.LogWarning("Redis database not available. Cannot set key: {Key}", key);
+                return;
+            }
+
             try
             {
                 var serialized = JsonSerializer.Serialize(value);
@@ -49,6 +61,12 @@ namespace CreditoAPI.Infrastructure.Cache
 
         public async Task RemoveAsync(string key)
         {
+            if (_database == null)
+            {
+                _logger.LogWarning("Redis database not available. Cannot remove key: {Key}", key);
+                return;
+            }
+
             try
             {
                 await _database.KeyDeleteAsync(key);
@@ -61,6 +79,12 @@ namespace CreditoAPI.Infrastructure.Cache
 
         public async Task<bool> ExistsAsync(string key)
         {
+            if (_database == null)
+            {
+                _logger.LogWarning("Redis database not available. Returning false for key existence: {Key}", key);
+                return false;
+            }
+
             try
             {
                 return await _database.KeyExistsAsync(key);
